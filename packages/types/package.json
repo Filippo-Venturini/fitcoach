@@ -1,0 +1,8 @@
+{
+  "name": "@fitcoach/types",
+  "version": "0.0.1",
+  "description": "Tipi TypeScript generati da Supabase, condivisi tra dashboard e app",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "private": true
+}

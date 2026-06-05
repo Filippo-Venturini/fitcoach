@@ -1,0 +1,7 @@
+{
+  "name": "fitcoach",
+  "private": true,
+  "scripts": {
+    "gen:types": "supabase gen types typescript --linked > packages/types/index.ts"
+  }
+}
