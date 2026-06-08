@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Camera, ChevronRight, Users, Dumbbell, Salad } from 'lucide-react'
+import { Camera, ChevronRight, Users, Dumbbell, Salad, AlertTriangle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 
@@ -37,6 +37,56 @@ function useKPIs() {
       }
     },
   })
+}
+
+function useExpiringItems() {
+  return useQuery({
+    queryKey: ['expiring-items'],
+    queryFn: async () => {
+      const today = new Date().toISOString().split('T')[0]
+      const inSevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+
+      const [{ data: programs }, { data: diets }] = await Promise.all([
+        supabase
+          .from('workout_programs')
+          .select('client_id, name, expires_at, profiles(id, full_name)')
+          .eq('is_active', true)
+          .not('expires_at', 'is', null)
+          .lte('expires_at', inSevenDays)
+          .order('expires_at'),
+        supabase
+          .from('diet_plans')
+          .select('client_id, name, expires_at, profiles(id, full_name)')
+          .eq('is_active', true)
+          .not('expires_at', 'is', null)
+          .lte('expires_at', inSevenDays)
+          .order('expires_at'),
+      ])
+
+      // Unifica per cliente
+      const map = new Map()
+      for (const p of programs ?? []) {
+        const id = p.client_id
+        if (!map.has(id)) map.set(id, { id, name: p.profiles?.full_name, items: [] })
+        map.get(id).items.push({ type: 'Programma', label: p.name ?? 'Programma', expires_at: p.expires_at })
+      }
+      for (const d of diets ?? []) {
+        const id = d.client_id
+        if (!map.has(id)) map.set(id, { id, name: d.profiles?.full_name, items: [] })
+        map.get(id).items.push({ type: 'Dieta', label: d.name, expires_at: d.expires_at })
+      }
+
+      return Array.from(map.values()).sort((a, b) => {
+        const minA = Math.min(...a.items.map(i => new Date(i.expires_at)))
+        const minB = Math.min(...b.items.map(i => new Date(i.expires_at)))
+        return minA - minB
+      })
+    },
+  })
+}
+
+function daysUntil(dateStr) {
+  return Math.ceil((new Date(dateStr) - new Date()) / (1000 * 60 * 60 * 24))
 }
 
 function useRecentPhotos() {
@@ -81,6 +131,7 @@ export function Home() {
   const { profile } = useAuth()
   const { data: kpis, isLoading: kpisLoading } = useKPIs()
   const { data: photos, isLoading: photosLoading } = useRecentPhotos()
+  const { data: expiring, isLoading: expiringLoading } = useExpiringItems()
 
   const byClient = photos?.reduce((acc, photo) => {
     const id = photo.client_id
@@ -108,6 +159,53 @@ export function Home() {
           <KpiCard value={kpis?.withProgram} label="Con scheda attiva" icon={Dumbbell} isLoading={kpisLoading} />
           <KpiCard value={kpis?.withDiet} label="Con dieta attiva" icon={Salad} isLoading={kpisLoading} />
         </div>
+
+        {/* Scadenze */}
+        {(expiringLoading || expiring?.length > 0) && (
+          <div className="mb-8">
+            <div className="flex items-center gap-3 mb-5">
+              <AlertTriangle size={18} className="text-amber-400" />
+              <h2 className="font-heading font-bold italic text-xl uppercase text-white">
+                In scadenza — prossimi 7 giorni
+              </h2>
+            </div>
+
+            {expiringLoading && <p className="text-slate-500 text-sm">Caricamento...</p>}
+
+            {expiring?.map(client => (
+              <Link
+                key={client.id}
+                to={`/clients/${client.id}`}
+                className="card mb-2 flex items-center justify-between hover:border-navy-600 transition-colors group"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-navy-700 flex items-center justify-center shrink-0">
+                    <span className="font-heading font-bold text-gold-500 text-lg">
+                      {client.name?.[0]?.toUpperCase() ?? '?'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-heading font-bold text-white group-hover:text-gold-400 transition-colors">
+                      {client.name}
+                    </p>
+                    <div className="flex gap-3 mt-0.5">
+                      {client.items.map((item, i) => {
+                        const days = daysUntil(item.expires_at)
+                        const cls = days < 0 ? 'text-red-400' : days <= 3 ? 'text-amber-400' : 'text-slate-400'
+                        return (
+                          <span key={i} className={`text-xs ${cls}`}>
+                            {item.type}: {days < 0 ? 'scaduto' : days === 0 ? 'oggi' : `${days}g`}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <ChevronRight size={16} className="text-slate-600 group-hover:text-gold-500 transition-colors" />
+              </Link>
+            ))}
+          </div>
+        )}
 
         {/* Foto recenti */}
         <div className="flex items-center gap-3 mb-5">

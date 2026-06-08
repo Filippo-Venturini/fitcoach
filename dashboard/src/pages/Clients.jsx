@@ -11,13 +11,9 @@ function useClients() {
       const { data, error } = await supabase
         .from('profiles')
         .select(`
-          id,
-          full_name,
-          email,
-          phone,
-          created_at,
-          workout_plans ( id, is_active ),
-          diet_plans ( id, is_active )
+          id, full_name, email, phone, created_at,
+          workout_programs ( id, is_active, expires_at ),
+          diet_plans ( id, is_active, expires_at )
         `)
         .eq('role', 'client')
         .order('full_name')
@@ -25,6 +21,29 @@ function useClients() {
       return data
     },
   })
+}
+
+const PAGE_SIZE = 25
+
+function ClientStatusCol({ label, expiresAt }) {
+  const days = expiresAt
+    ? Math.ceil((new Date(expiresAt) - new Date()) / (1000 * 60 * 60 * 24))
+    : null
+  const dateColor = days === null ? 'text-slate-600'
+    : days < 0 ? 'text-red-400'
+    : days <= 7 ? 'text-amber-400'
+    : 'text-slate-400'
+  const dateText = days === null ? '—'
+    : days < 0 ? 'Scaduto'
+    : days === 0 ? 'Scade oggi'
+    : new Date(expiresAt).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })
+
+  return (
+    <div className="text-center w-28">
+      <p className="text-xs text-slate-500 font-heading uppercase tracking-wider">{label}</p>
+      <p className={`text-xs font-medium mt-0.5 ${dateColor}`}>{dateText}</p>
+    </div>
+  )
 }
 
 // Crea utente via signUp (funziona con anon key, senza admin API)
@@ -147,12 +166,21 @@ function NewClientModal({ onClose }) {
 export function Clients() {
   const { data: clients, isLoading } = useClients()
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
   const [showModal, setShowModal] = useState(false)
 
   const filtered = clients?.filter(c =>
     c.full_name?.toLowerCase().includes(search.toLowerCase()) ||
     c.email?.toLowerCase().includes(search.toLowerCase())
   )
+
+  const totalPages = Math.ceil((filtered?.length ?? 0) / PAGE_SIZE)
+  const paginated = filtered?.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
+  function handleSearch(val) {
+    setSearch(val)
+    setPage(0)
+  }
 
   return (
     <div className="p-8">
@@ -180,7 +208,7 @@ export function Clients() {
           className="input pl-9"
           placeholder="Cerca per nome o email..."
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => handleSearch(e.target.value)}
         />
       </div>
       {isLoading && <p className="text-slate-500 text-sm">Caricamento...</p>}
@@ -191,9 +219,9 @@ export function Clients() {
         </div>
       )}
 
-      {filtered?.map(client => {
-        const hasActivePlan = client.workout_plans?.some(p => p.is_active)
-        const hasActiveDiet = client.diet_plans?.some(d => d.is_active)
+      {paginated?.map(client => {
+        const activeProgram = client.workout_programs?.find(p => p.is_active)
+        const activeDiet = client.diet_plans?.find(d => d.is_active)
         return (
           <Link
             key={client.id}
@@ -210,25 +238,44 @@ export function Clients() {
                 <p className="font-heading font-bold text-lg text-white group-hover:text-gold-400 transition-colors leading-tight">
                   {client.full_name ?? '—'}
                 </p>
-                <p className="text-slate-500 text-xs mt-0.5">
-                  {client.email}
-                </p>
+                <p className="text-slate-500 text-xs mt-0.5">{client.email}</p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              {hasActivePlan
-                ? <span className="badge-gold">Scheda ✓</span>
-                : <span className="badge-gray">Nessuna scheda</span>
-              }
-              {hasActiveDiet
-                ? <span className="badge-gold">Dieta ✓</span>
-                : <span className="badge-gray">Nessuna dieta</span>
-              }
-              <ChevronRight size={16} className="text-slate-600 group-hover:text-gold-500 transition-colors" />
+            <div className="flex items-center gap-4">
+              <div className="flex gap-4">
+                {activeProgram && <ClientStatusCol label="Programma" expiresAt={activeProgram.expires_at} />}
+                {activeDiet && <ClientStatusCol label="Dieta" expiresAt={activeDiet.expires_at} />}
+              </div>
+              <ChevronRight size={16} className="text-slate-600 group-hover:text-gold-500 transition-colors shrink-0" />
             </div>
           </Link>
         )
       })}
+
+      {/* Paginazione */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-4 pt-4 border-t border-navy-700">
+          <span className="text-slate-500 text-sm">
+            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered?.length ?? 0)} di {filtered?.length}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage(p => p - 1)}
+              disabled={page === 0}
+              className="btn-ghost text-sm px-3 py-1.5 disabled:opacity-30"
+            >
+              ← Precedente
+            </button>
+            <button
+              onClick={() => setPage(p => p + 1)}
+              disabled={page >= totalPages - 1}
+              className="btn-ghost text-sm px-3 py-1.5 disabled:opacity-30"
+            >
+              Successiva →
+            </button>
+          </div>
+        </div>
+      )}
 
       </div> {/* max-w-4xl */}
       {showModal && <NewClientModal onClose={() => setShowModal(false)} />}

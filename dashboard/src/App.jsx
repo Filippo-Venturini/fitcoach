@@ -9,6 +9,8 @@ import { Clients } from './pages/Clients'
 import { ClientDetail } from './pages/ClientDetail'
 import { Catalog } from './pages/Catalog'
 import { NewWorkoutProgram } from './pages/NewWorkoutProgram'
+import { UsefulFiles } from './pages/UsefulFiles'
+import { Settings } from './pages/Settings'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,6 +42,8 @@ export default function App() {
               {/* La pagina "Nuovo programma" occupa tutta la finestra (senza sidebar) */}
               <Route path="clients/:id/programs/new" element={<NewWorkoutProgram />} />
               <Route path="catalog" element={<Catalog />} />
+              <Route path="files" element={<UsefulFiles />} />
+              <Route path="settings" element={<Settings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -1,11 +1,13 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { Users, Home, Dumbbell, LogOut } from 'lucide-react'
+import { Users, Home, Dumbbell, LogOut, FolderOpen, Settings } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
 const navItems = [
-  { to: '/',        label: 'HOME',     icon: Home,     end: true },
-  { to: '/clients', label: 'CLIENTI',  icon: Users },
-  { to: '/catalog', label: 'ESERCIZI', icon: Dumbbell },
+  { to: '/',           label: 'HOME',         icon: Home,     end: true },
+  { to: '/clients',    label: 'CLIENTI',      icon: Users },
+  { to: '/catalog',    label: 'ESERCIZI',     icon: Dumbbell },
+  { to: '/files',      label: 'FILE UTILI',   icon: FolderOpen },
+  { to: '/settings',   label: 'IMPOSTAZIONI', icon: Settings },
 ]
 
 export function Layout() {
@@ -26,7 +28,6 @@ export function Layout() {
           <span className="font-heading font-bold italic text-2xl text-gold-500 uppercase tracking-wider">
             FitCoach
           </span>
-          <p className="text-slate-500 text-xs mt-0.5">Dashboard PT</p>
         </div>
 
         {/* Nav */}

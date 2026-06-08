@@ -53,12 +53,12 @@ function useClient(id) {
 function useSaveProgram() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ clientId, programName, plans }) => {
+    mutationFn: async ({ clientId, programName, programNotes, programExpiry, plans }) => {
       await supabase.from('workout_programs').update({ is_active: false }).eq('client_id', clientId)
 
       const { data: program, error: progError } = await supabase
         .from('workout_programs')
-        .insert({ client_id: clientId, name: programName || null, is_active: true })
+        .insert({ client_id: clientId, name: programName || null, notes: programNotes || null, expires_at: programExpiry || null, is_active: true })
         .select().single()
       if (progError) throw progError
 
@@ -213,6 +213,38 @@ function CatalogPanel({ plans, activePlanIdx, onAddExercise }) {
   )
 }
 
+// ─── Volume counter ───────────────────────────────────────────
+
+function muscleGroupCountsFromPlans(plans) {
+  const counts = {}
+  for (const plan of plans) {
+    for (const ex of (plan.exercises ?? [])) {
+      const mg = ex.muscle_group
+      if (mg) counts[mg] = (counts[mg] || 0) + 1
+    }
+  }
+  return counts
+}
+
+function VolumeCounter({ plans }) {
+  const counts = muscleGroupCountsFromPlans(plans)
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1])
+  if (!entries.length) return null
+  return (
+    <div className="mt-4 p-3 bg-navy-800 border border-navy-700">
+      <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-2">Volume programma</p>
+      <div className="flex flex-wrap gap-2">
+        {entries.map(([mg, count]) => (
+          <span key={mg} className="flex items-center gap-1.5 bg-navy-900 border border-navy-700 px-2 py-1 text-xs">
+            <span className="text-slate-300">{mg}</span>
+            <span className="text-gold-500 font-bold">{count}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 function makeEmptyExercise(catalogItem) {
@@ -242,6 +274,8 @@ export function NewWorkoutProgram() {
   const saveProgram = useSaveProgram()
 
   const [programName, setProgramName] = useState('')
+  const [programNotes, setProgramNotes] = useState('')
+  const [programExpiry, setProgramExpiry] = useState('')
   const [plans, setPlans] = useState([makeEmptyPlan('Scheda A')])
   const [activePlanIdx, setActivePlanIdx] = useState(0)
   const [expandedPlans, setExpandedPlans] = useState({ 0: true })
@@ -303,11 +337,13 @@ export function NewWorkoutProgram() {
   }
 
   async function handleSave() {
+    if (!programName.trim()) { setError('Dai un nome al programma'); return }
+    if (!programExpiry) { setError('Imposta una data di scadenza'); return }
     if (plans.some(p => !p.name.trim())) { setError('Dai un nome a ogni scheda'); return }
     if (plans.every(p => p.exercises.length === 0)) { setError('Aggiungi almeno un esercizio'); return }
     setError(null)
     try {
-      await saveProgram.mutateAsync({ clientId, programName, plans })
+      await saveProgram.mutateAsync({ clientId, programName, programNotes, programExpiry, plans })
       navigate(`/clients/${clientId}?tab=scheda`)
     } catch (err) {
       setError(err.message)
@@ -323,14 +359,27 @@ export function NewWorkoutProgram() {
             <ArrowLeft size={15} />
             {client?.full_name ?? 'Cliente'}
           </Link>
-          <div className="border-l border-navy-700 pl-5">
-            <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-0.5">Nome programma</p>
-            <input
-              className="bg-transparent text-white font-heading font-bold italic text-xl uppercase border-0 border-b border-navy-600 focus:border-gold-500 focus:outline-none px-0 w-72 placeholder-navy-600 transition-colors"
-              placeholder="ES. FORZA FASE 1, RECOMP..."
-              value={programName}
-              onChange={e => setProgramName(e.target.value)}
-            />
+          <div className="border-l border-navy-700 pl-5 flex items-end gap-6">
+            <div>
+              <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-0.5">Nome programma</p>
+              <input
+                className={`bg-transparent text-white font-heading font-bold italic text-xl uppercase border-0 border-b focus:outline-none px-0 w-64 placeholder-navy-600 transition-colors ${error === 'Dai un nome al programma' && !programName.trim() ? 'border-red-500' : 'border-navy-600 focus:border-gold-500'}`}
+                placeholder="ES. FORZA FASE 1, RECOMP..."
+                value={programName}
+                onChange={e => setProgramName(e.target.value)}
+              />
+            </div>
+            <div>
+              <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-0.5">Scadenza</p>
+              <input
+                type="date"
+                className="bg-transparent text-white border-0 border-b border-navy-600 focus:border-gold-500 focus:outline-none px-0 text-sm transition-colors"
+                style={{ colorScheme: 'dark' }}
+                min={new Date().toISOString().split('T')[0]}
+                value={programExpiry}
+                onChange={e => setProgramExpiry(e.target.value)}
+              />
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -345,7 +394,18 @@ export function NewWorkoutProgram() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left: plans */}
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="space-y-3">
+          <div className="mb-4 bg-navy-800 border border-navy-700 p-4">
+            <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-2">Note programma</p>
+            <textarea
+              className="input w-full text-sm resize-none"
+              rows={3}
+              placeholder="Note generali sul programma"
+              value={programNotes}
+              onChange={e => setProgramNotes(e.target.value)}
+            />
+          </div>
+          <VolumeCounter plans={plans} />
+          <div className="space-y-3 mt-4">
             {plans.map((plan, planIdx) => {
               const isActive = activePlanIdx === planIdx
               const isExpanded = expandedPlans[planIdx]
@@ -434,6 +494,7 @@ export function NewWorkoutProgram() {
               Aggiungi scheda
             </button>
           )}
+
         </div>
 
         {/* Right: catalog */}

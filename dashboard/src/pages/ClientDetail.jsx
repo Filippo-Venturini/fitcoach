@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Upload, Plus, ExternalLink, ChevronDown, ChevronUp, Pencil, Check, X, ArrowUp, ArrowDown } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Upload, Plus, ExternalLink, ChevronDown, ChevronUp, Pencil, Check, X, ArrowUp, ArrowDown, Send, Clock, Dumbbell, Salad } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 // ─── Data hooks ───────────────────────────────────────────────
@@ -14,6 +14,37 @@ function useClient(id) {
         .from('profiles').select('*').eq('id', id).single()
       if (error) throw error
       return data
+    },
+  })
+}
+
+function useQuestionnaireFormUrl() {
+  return useQuery({
+    queryKey: ['app-settings', 'questionnaire_form_url'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'questionnaire_form_url')
+        .single()
+      if (error) throw error
+      return data?.value ?? null
+    },
+  })
+}
+
+function useSetQuestionnaire() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ clientId, pending }) => {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ questionnaire_pending: pending })
+        .eq('id', clientId)
+      if (error) throw error
+    },
+    onSuccess: (_, { clientId }) => {
+      qc.invalidateQueries({ queryKey: ['client', clientId] })
     },
   })
 }
@@ -70,6 +101,88 @@ function useUpdateExercises() {
   })
 }
 
+function useUpdateProgramNotes() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ clientId, programId, notes }) => {
+      const { error } = await supabase
+        .from('workout_programs')
+        .update({ notes: notes || null })
+        .eq('id', programId)
+      if (error) throw error
+    },
+    onSuccess: (_, { clientId }) => {
+      qc.invalidateQueries({ queryKey: ['workout-programs', clientId] })
+    },
+  })
+}
+
+function useActiveProgram(clientId) {
+  return useQuery({
+    queryKey: ['active-program', clientId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('workout_programs')
+        .select('id, name, expires_at')
+        .eq('client_id', clientId)
+        .eq('is_active', true)
+        .maybeSingle()
+      return data
+    },
+  })
+}
+
+function useActiveDietInfo(clientId) {
+  return useQuery({
+    queryKey: ['active-diet-info', clientId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('diet_plans')
+        .select('id, name, expires_at')
+        .eq('client_id', clientId)
+        .eq('is_active', true)
+        .maybeSingle()
+      return data
+    },
+  })
+}
+
+function useUpdateProgramExpiry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ clientId, programId, expiresAt }) => {
+      const { error } = await supabase
+        .from('workout_programs')
+        .update({ expires_at: expiresAt || null })
+        .eq('id', programId)
+      if (error) throw error
+    },
+    onSuccess: (_, { clientId }) => {
+      qc.invalidateQueries({ queryKey: ['workout-programs', clientId] })
+      qc.invalidateQueries({ queryKey: ['active-program', clientId] })
+      qc.invalidateQueries({ queryKey: ['expiring-items'] })
+    },
+  })
+}
+
+function useUpdateDietExpiry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ clientId, dietId, expiresAt }) => {
+      const { error } = await supabase
+        .from('diet_plans')
+        .update({ expires_at: expiresAt || null })
+        .eq('id', dietId)
+      if (error) throw error
+    },
+    onSuccess: (_, { clientId }) => {
+      qc.invalidateQueries({ queryKey: ['diet-plans', clientId] })
+      qc.invalidateQueries({ queryKey: ['active-diet-info', clientId] })
+      qc.invalidateQueries({ queryKey: ['expiring-items'] })
+    },
+  })
+}
+
 function useDietPlans(clientId) {
   return useQuery({
     queryKey: ['diet-plans', clientId],
@@ -83,15 +196,61 @@ function useDietPlans(clientId) {
   })
 }
 
-function useProgressPhotos(clientId) {
+function getMonday(dateStr) {
+  const d = new Date(dateStr)
+  const day = d.getDay()
+  const monday = new Date(d)
+  monday.setDate(d.getDate() - day + (day === 0 ? -6 : 1))
+  monday.setHours(0, 0, 0, 0)
+  return monday
+}
+
+function getWeekKey(dateStr) {
+  return getMonday(dateStr).toISOString().split('T')[0]
+}
+
+function usePhotoWeeks(clientId) {
   return useQuery({
-    queryKey: ['progress-photos', clientId],
+    queryKey: ['photo-weeks', clientId],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('progress_photos').select('*').eq('client_id', clientId)
+        .from('progress_photos')
+        .select('id, created_at')
+        .eq('client_id', clientId)
         .order('created_at', { ascending: false })
       if (error) throw error
-      return data
+      const weekMap = new Map()
+      for (const photo of data ?? []) {
+        const key = getWeekKey(photo.created_at)
+        if (!weekMap.has(key)) weekMap.set(key, { key, weekStart: getMonday(photo.created_at), count: 0 })
+        weekMap.get(key).count++
+      }
+      return Array.from(weekMap.values())
+    },
+  })
+}
+
+function useWeekPhotos(clientId, weekKey, weekStart, enabled) {
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekEnd.getDate() + 7)
+  return useQuery({
+    queryKey: ['week-photos', clientId, weekKey],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('progress_photos')
+        .select('id, photo_url, created_at, notes')
+        .eq('client_id', clientId)
+        .gte('created_at', weekStart.toISOString())
+        .lt('created_at', weekEnd.toISOString())
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      if (!data?.length) return []
+      const { data: signed } = await supabase.storage
+        .from('progress-photos')
+        .createSignedUrls(data.map(p => p.photo_url), 3600)
+      const urlMap = Object.fromEntries((signed ?? []).map(s => [s.path, s.signedUrl]))
+      return data.map(p => ({ ...p, signedUrl: urlMap[p.photo_url] ?? null }))
     },
   })
 }
@@ -100,6 +259,15 @@ function useProgressPhotos(clientId) {
 
 function fmt(dateStr, opts) {
   return new Date(dateStr).toLocaleDateString('it-IT', opts ?? { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function expiryInfo(expiresAt) {
+  if (!expiresAt) return null
+  const diff = Math.ceil((new Date(expiresAt) - new Date()) / (1000 * 60 * 60 * 24))
+  if (diff < 0)   return { label: 'Scaduto',            cls: 'text-red-400' }
+  if (diff === 0) return { label: 'Scade oggi',          cls: 'text-amber-400' }
+  if (diff <= 7)  return { label: `Scade tra ${diff}g`,  cls: 'text-amber-400' }
+  return { label: `Scade il ${fmt(expiresAt)}`,          cls: 'text-slate-500' }
 }
 
 function ExerciseViewRow({ ex, onVideoToggle, videoId }) {
@@ -169,6 +337,98 @@ function ExerciseEditRow({ ex, data, onChange, onMoveUp, onMoveDown, isFirst, is
         </div>
       </div>
       <input className="input text-xs py-1" value={data.notes ?? ''} onChange={e => onChange('notes', e.target.value)} placeholder="Note (opzionale)" />
+    </div>
+  )
+}
+
+// ─── Volume counter ───────────────────────────────────────────
+
+function muscleGroupCountsFromProgram(plans) {
+  const counts = {}
+  for (const plan of (plans ?? [])) {
+    for (const ex of (plan.workout_exercises ?? [])) {
+      const mg = ex.exercises_catalog?.muscle_group
+      if (mg) counts[mg] = (counts[mg] || 0) + 1
+    }
+  }
+  return counts
+}
+
+function ProgramVolumeCounter({ plans }) {
+  const counts = muscleGroupCountsFromProgram(plans)
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1])
+  if (!entries.length) return null
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {entries.map(([mg, count]) => (
+        <span key={mg} className="flex items-center gap-1 bg-navy-800 border border-navy-700 px-2 py-0.5 text-xs">
+          <span className="text-slate-400">{mg}</span>
+          <span className="text-gold-500 font-bold">{count}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+// ─── Expiry cards ─────────────────────────────────────────────
+
+function ExpiryCard({ icon: Icon, type, item, onSave, isSaving }) {
+  const [editing, setEditing] = useState(false)
+  const [dateValue, setDateValue] = useState(item?.expires_at ?? '')
+
+  const days = item?.expires_at ? Math.ceil((new Date(item.expires_at) - new Date()) / (1000 * 60 * 60 * 24)) : null
+  const urgent = days !== null && days <= 7
+  const dateColor = days === null ? 'text-slate-600' : days < 0 ? 'text-red-400' : days <= 7 ? 'text-amber-400' : 'text-white'
+
+  async function handleSave() {
+    await onSave(dateValue)
+    setEditing(false)
+  }
+
+  return (
+    <div className={`card flex items-center justify-between gap-3 ${urgent ? 'border-amber-500/30' : ''}`}>
+      <div className="flex items-center gap-3">
+        <div className={`w-8 h-8 flex items-center justify-center shrink-0 ${urgent ? 'bg-amber-900/30' : 'bg-navy-900'}`}>
+          <Icon size={15} className={urgent ? 'text-amber-400' : 'text-gold-500'} />
+        </div>
+          <div>
+            <p className="text-xs font-heading uppercase tracking-wider text-slate-500">{type}</p>
+            {!editing && (
+              <p className={`text-base font-heading font-bold uppercase tracking-wider mt-0.5 ${dateColor}`}>
+                <span className="text-slate-500 mr-1.5">Scadenza:</span>
+                {item?.expires_at ? fmt(item.expires_at).toUpperCase() : '—'}
+              </p>
+            )}
+            {editing && (
+              <div className="flex items-center gap-2 mt-1.5">
+                <input
+                  type="date"
+                  className="input text-xs py-1 w-36"
+                  style={{ colorScheme: 'dark' }}
+                  min={new Date().toISOString().split('T')[0]}
+                  value={dateValue}
+                  onChange={e => setDateValue(e.target.value)}
+                  autoFocus
+                />
+                <button onClick={handleSave} disabled={isSaving} className="btn-primary text-xs px-2 py-1 disabled:opacity-50">
+                  <Check size={12} />
+                </button>
+                <button onClick={() => { setDateValue(item?.expires_at ?? ''); setEditing(false) }} className="btn-ghost text-xs px-2 py-1">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+      {item && !editing && (
+        <button
+          onClick={() => { setDateValue(item.expires_at ?? ''); setEditing(true) }}
+          className="p-1.5 text-slate-600 hover:text-white transition-colors shrink-0"
+        >
+          <Pencil size={13} />
+        </button>
+      )}
     </div>
   )
 }
@@ -296,36 +556,93 @@ function PlanCard({ plan, programIsActive, clientId }) {
 
 function ProgramCard({ program, clientId }) {
   const [open, setOpen] = useState(program.is_active)
+  const [editingNotes, setEditingNotes] = useState(false)
+  const [notesValue, setNotesValue] = useState(program.notes ?? '')
+  const updateNotes = useUpdateProgramNotes()
+
+  const expiryStatus = program.is_active ? expiryInfo(program.expires_at) : null
+
+  async function saveNotes() {
+    await updateNotes.mutateAsync({ clientId, programId: program.id, notes: notesValue })
+    setEditingNotes(false)
+  }
+
+  function cancelNotes() {
+    setNotesValue(program.notes ?? '')
+    setEditingNotes(false)
+  }
 
   return (
     <div className={`card mb-4 ${program.is_active ? 'border-gold-500/30' : ''}`}>
-      {/* Program header */}
-      <button className="w-full flex items-center justify-between" onClick={() => setOpen(o => !o)}>
+      {/* Header: solo badge + nome */}
+      <button className="w-full flex items-center justify-between gap-4" onClick={() => setOpen(o => !o)}>
         <div className="flex items-center gap-3">
           {program.is_active && <span className="badge-gold">Attivo</span>}
-          <div className="text-left">
-            <p className="font-heading font-bold text-white">
-              {program.name ?? 'Programma'}
-            </p>
-            <p className="text-slate-500 text-xs">
-              Dal {fmt(program.created_at)} · {program.workout_plans?.length ?? 0} schede
-            </p>
-          </div>
+          <p className="font-heading font-bold text-white text-left">
+            {program.name ?? 'Programma'}
+          </p>
         </div>
-        {open ? <ChevronUp size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
+        <div className="flex items-center gap-3">
+          <span className="text-slate-500 text-xs">
+            {fmt(program.created_at)}{program.expires_at ? ` — ${fmt(program.expires_at)}` : ''}
+          </span>
+          {open ? <ChevronUp size={16} className="text-slate-500 shrink-0" /> : <ChevronDown size={16} className="text-slate-500 shrink-0" />}
+        </div>
       </button>
 
-      {/* Plans */}
       {open && (
-        <div className="mt-4 space-y-2">
-          {program.workout_plans?.map(plan => (
-            <PlanCard
-              key={plan.id}
-              plan={plan}
-              programIsActive={program.is_active}
-              clientId={clientId}
-            />
-          ))}
+        <div className="mt-3 space-y-3">
+          {/* Volume */}
+          <ProgramVolumeCounter plans={program.workout_plans} />
+
+          {/* Note: visibili solo se presenti, editing inline */}
+          {!editingNotes && notesValue && (
+            <div className="flex items-start gap-2">
+              <p className="text-slate-400 text-sm italic flex-1 whitespace-pre-wrap">{notesValue}</p>
+              {program.is_active && (
+                <button onClick={() => setEditingNotes(true)} className="p-1 text-slate-600 hover:text-white transition-colors shrink-0 mt-0.5">
+                  <Pencil size={12} />
+                </button>
+              )}
+            </div>
+          )}
+          {!editingNotes && !notesValue && program.is_active && (
+            <button onClick={() => setEditingNotes(true)} className="text-slate-600 hover:text-slate-400 text-xs transition-colors text-left">
+              + Aggiungi note
+            </button>
+          )}
+          {editingNotes && (
+            <div>
+              <textarea
+                className="input w-full text-sm resize-none"
+                rows={3}
+                value={notesValue}
+                onChange={e => setNotesValue(e.target.value)}
+                placeholder="Note generali per il cliente..."
+                autoFocus
+              />
+              <div className="flex gap-2 mt-2">
+                <button onClick={cancelNotes} className="btn-ghost text-xs px-2 py-1">
+                  <X size={12} /> Annulla
+                </button>
+                <button onClick={saveNotes} disabled={updateNotes.isPending} className="btn-primary text-xs px-3 py-1 disabled:opacity-50">
+                  <Check size={12} /> {updateNotes.isPending ? 'Salvo...' : 'Salva'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Schede */}
+          <div className="space-y-2">
+            {program.workout_plans?.map(plan => (
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                programIsActive={program.is_active}
+                clientId={clientId}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -344,7 +661,7 @@ function TabScheda({ clientId }) {
     <div className="max-w-4xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h3 className="font-heading font-bold italic text-xl uppercase text-white">
-          Schede di allenamento
+          Programmi di allenamento
         </h3>
         <Link to={`/clients/${clientId}/programs/new`} className="btn-primary text-sm">
           <Plus size={14} />
@@ -377,6 +694,7 @@ function TabDieta({ clientId }) {
   const qc = useQueryClient()
   const [uploading, setUploading] = useState(false)
   const [planName, setPlanName] = useState('')
+  const [planExpiry, setPlanExpiry] = useState('')
   const [uploadError, setUploadError] = useState(null)
 
   function getPdfUrl(path) {
@@ -385,7 +703,7 @@ function TabDieta({ clientId }) {
 
   async function handleUpload(e) {
     const file = e.target.files?.[0]
-    if (!file || !planName.trim()) return
+    if (!file || !planName.trim() || !planExpiry) return
     // reset input file per permettere upload dello stesso file
     e.target.value = ''
     setUploadError(null)
@@ -405,11 +723,15 @@ function TabDieta({ clientId }) {
         name: planName,
         pdf_url: path,
         is_active: true,
+        expires_at: planExpiry || null,
       })
       if (insertError) throw new Error(`DB: ${insertError.message}`)
 
       qc.invalidateQueries({ queryKey: ['diet-plans', clientId] })
+      qc.invalidateQueries({ queryKey: ['active-diet-info', clientId] })
+      qc.invalidateQueries({ queryKey: ['expiring-items'] })
       setPlanName('')
+      setPlanExpiry('')
     } catch (err) {
       setUploadError(err.message)
     } finally {
@@ -435,10 +757,18 @@ function TabDieta({ clientId }) {
             value={planName}
             onChange={e => setPlanName(e.target.value)}
           />
-          <label className={`btn-primary shrink-0 ${!planName.trim() || uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+          <input
+            type="date"
+            className="input w-44 shrink-0"
+            style={{ colorScheme: 'dark' }}
+            min={new Date().toISOString().split('T')[0]}
+            value={planExpiry}
+            onChange={e => setPlanExpiry(e.target.value)}
+          />
+          <label className={`btn-primary shrink-0 ${!planName.trim() || !planExpiry || uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <Upload size={14} />
             {uploading ? 'CARICAMENTO...' : 'CARICA PDF'}
-            <input type="file" accept=".pdf" className="hidden" disabled={!planName.trim() || uploading} onChange={handleUpload} />
+            <input type="file" accept=".pdf" className="hidden" disabled={!planName.trim() || !planExpiry || uploading} onChange={handleUpload} />
           </label>
         </div>
         {uploadError && (
@@ -462,6 +792,7 @@ function TabDieta({ clientId }) {
               <ExternalLink size={14} /> Apri PDF
             </a>
           </div>
+
           <iframe src={getPdfUrl(activeDiet.pdf_url)} className="w-full h-96 border-0" title="Dieta" />
         </div>
       )}
@@ -477,7 +808,9 @@ function TabDieta({ clientId }) {
             <div key={diet.id} className="card mb-2 flex items-center justify-between">
               <div>
                 <span className="font-heading font-bold text-slate-300">{diet.name}</span>
-                <span className="text-slate-500 text-xs ml-3">{fmt(diet.created_at)}</span>
+                <span className="text-slate-500 text-xs ml-3">
+                  {fmt(diet.created_at)}{diet.expires_at ? ` — ${fmt(diet.expires_at)}` : ''}
+                </span>
               </div>
               <a href={getPdfUrl(diet.pdf_url)} target="_blank" rel="noopener noreferrer" className="btn-ghost text-xs px-3 py-1.5">
                 <ExternalLink size={12} /> PDF
@@ -492,47 +825,226 @@ function TabDieta({ clientId }) {
 
 // ─── Tab: Foto ────────────────────────────────────────────────
 
+function PhotoCarousel({ photos }) {
+  const [start, setStart] = useState(0)
+  const visible = 3
+  const total = photos.length
+  const canPrev = start > 0
+  const canNext = start + visible < total
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setStart(s => s - 1)}
+          disabled={!canPrev}
+          className="btn-ghost p-1.5 w-8 h-8 flex items-center justify-center shrink-0 disabled:opacity-20 disabled:cursor-default"
+        >
+          <ArrowLeft size={15} />
+        </button>
+
+        <div className="grid grid-cols-3 gap-2 flex-1">
+          {photos.slice(start, start + visible).map(photo => (
+            <a key={photo.id} href={photo.signedUrl} target="_blank" rel="noopener noreferrer">
+              <img
+                src={photo.signedUrl}
+                alt="Progress"
+                className="w-full aspect-square object-cover hover:opacity-80 transition-opacity"
+              />
+            </a>
+          ))}
+        </div>
+
+        <button
+          onClick={() => setStart(s => s + 1)}
+          disabled={!canNext}
+          className="btn-ghost p-1.5 w-8 h-8 flex items-center justify-center shrink-0 disabled:opacity-20 disabled:cursor-default"
+        >
+          <ArrowRight size={15} />
+        </button>
+      </div>
+
+      {total > visible && (
+        <p className="text-slate-600 text-xs mt-2 text-right">{start + 1}–{Math.min(start + visible, total)} di {total}</p>
+      )}
+
+      {photos[start]?.notes && (
+        <p className="text-slate-400 text-sm mt-2 italic">{photos[start].notes}</p>
+      )}
+    </div>
+  )
+}
+
+function WeekRow({ week, clientId }) {
+  const [open, setOpen] = useState(false)
+  const { data: photos, isLoading } = useWeekPhotos(clientId, week.key, week.weekStart, open)
+
+  return (
+    <div className="card mb-3">
+      <button className="w-full flex items-center justify-between gap-4" onClick={() => setOpen(o => !o)}>
+        <div className="text-left">
+          <p className="font-heading font-bold text-white">
+            {fmt(week.weekStart, { day: '2-digit', month: 'long', year: 'numeric' })}
+          </p>
+          <p className="text-slate-500 text-xs mt-0.5">{week.count} foto</p>
+        </div>
+        {open
+          ? <ChevronUp size={16} className="text-slate-500 shrink-0" />
+          : <ChevronDown size={16} className="text-slate-500 shrink-0" />
+        }
+      </button>
+
+      {open && (
+        <div className="mt-4 border-t border-navy-700 pt-4">
+          {isLoading
+            ? <p className="text-slate-500 text-sm">Caricamento...</p>
+            : photos?.length
+              ? <PhotoCarousel photos={photos.filter(p => p.signedUrl)} />
+              : <p className="text-slate-500 text-sm">Nessuna foto</p>
+          }
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TabFoto({ clientId }) {
-  const { data: photos, isLoading, isError, error } = useProgressPhotos(clientId)
+  const { data: weeks, isLoading, isError, error } = usePhotoWeeks(clientId)
 
   if (isLoading) return <p className="text-slate-500 text-sm">Caricamento...</p>
-  if (isError) return <div className="card text-center py-10"><p className="text-red-400 text-sm">Errore nel caricamento delle foto: {error?.message}</p></div>
-  if (!photos?.length) {
+  if (isError) return <div className="card text-center py-10"><p className="text-red-400 text-sm">Errore: {error?.message}</p></div>
+  if (!weeks?.length) {
     return <div className="card text-center py-10"><p className="text-slate-500">Il cliente non ha ancora caricato foto</p></div>
   }
-
-  const byWeek = photos.reduce((acc, photo) => {
-    const d = new Date(photo.created_at)
-    const day = d.getDay()
-    const monday = new Date(d)
-    monday.setDate(d.getDate() - day + (day === 0 ? -6 : 1))
-    const key = monday.toISOString().split('T')[0]
-    if (!acc[key]) acc[key] = []
-    acc[key].push(photo)
-    return acc
-  }, {})
 
   return (
     <div className="max-w-4xl mx-auto">
       <h3 className="font-heading font-bold italic text-xl uppercase text-white mb-6">Foto progressi</h3>
-      {Object.entries(byWeek).map(([week, weekPhotos]) => (
-        <div key={week} className="mb-8">
-          <p className="text-xs font-heading uppercase tracking-wider text-slate-400 mb-3">
-            Settimana del {fmt(week, { day: '2-digit', month: 'long', year: 'numeric' })}
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            {weekPhotos.map(photo => {
-              const url = supabase.storage.from('progress-photos').getPublicUrl(photo.photo_url).data.publicUrl
-              return (
-                <a key={photo.id} href={url} target="_blank" rel="noopener noreferrer">
-                  <img src={url} alt="Progress" className="w-full aspect-square object-cover hover:opacity-80 transition-opacity" />
-                </a>
-              )
-            })}
-          </div>
-          {weekPhotos[0]?.notes && <p className="text-slate-400 text-sm mt-2 italic">{weekPhotos[0].notes}</p>}
-        </div>
+      {weeks.map(week => (
+        <WeekRow key={week.key} week={week} clientId={clientId} />
       ))}
+    </div>
+  )
+}
+
+// ─── Tab: Dati ────────────────────────────────────────────────
+
+const METRICS = [
+  { key: 'peso',    label: 'Peso',                unit: 'kg' },
+  { key: 'vita',    label: 'Circonferenza vita',  unit: 'cm' },
+  { key: 'fianchi', label: 'Circonferenza fianchi', unit: 'cm' },
+  { key: 'sonno',   label: 'Ore di sonno',        unit: 'h'  },
+  { key: 'passi',   label: 'Passi',               unit: ''   },
+  { key: 'calorie', label: 'Calorie',             unit: 'kcal' },
+]
+
+const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
+
+function getWeekDays(monday) {
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday)
+    d.setDate(d.getDate() + i)
+    return d
+  })
+}
+
+function getMondayOf(date) {
+  const d = new Date(date)
+  const day = d.getDay()
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function toDateKey(date) {
+  return date.toISOString().split('T')[0]
+}
+
+function useDailyLogs(clientId, weekStart) {
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekEnd.getDate() + 7)
+  return useQuery({
+    queryKey: ['daily-logs', clientId, toDateKey(weekStart)],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('daily_logs')
+        .select('logged_date, data')
+        .eq('client_id', clientId)
+        .gte('logged_date', toDateKey(weekStart))
+        .lt('logged_date', toDateKey(weekEnd))
+      if (error) throw error
+      return Object.fromEntries((data ?? []).map(r => [r.logged_date, r.data]))
+    },
+  })
+}
+
+function TabDati({ clientId }) {
+  const [monday, setMonday] = useState(() => getMondayOf(new Date()))
+  const days = getWeekDays(monday)
+  const { data: logs, isLoading } = useDailyLogs(clientId, monday)
+
+  const fmtDay = (d) => d.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
+
+  function prevWeek() { setMonday(m => { const d = new Date(m); d.setDate(d.getDate() - 7); return d }) }
+  function nextWeek() { setMonday(m => { const d = new Date(m); d.setDate(d.getDate() + 7); return d }) }
+  const isCurrentWeek = toDateKey(monday) === toDateKey(getMondayOf(new Date()))
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="font-heading font-bold italic text-xl uppercase text-white">Raccolta dati</h3>
+        <div className="flex items-center gap-3">
+          <button onClick={prevWeek} className="btn-ghost p-1.5"><ArrowLeft size={15} /></button>
+          <span className="text-slate-300 text-sm font-heading uppercase tracking-wider min-w-40 text-center">
+            {fmtDay(days[0])} – {fmtDay(days[6])}
+          </span>
+          <button onClick={nextWeek} disabled={isCurrentWeek} className="btn-ghost p-1.5 disabled:opacity-30">
+            <ArrowRight size={15} />
+          </button>
+        </div>
+      </div>
+
+      <div className="card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-navy-700">
+              <th className="text-left py-2 pr-4 text-slate-500 text-xs font-heading uppercase tracking-wider whitespace-nowrap w-36">
+                Metrica
+              </th>
+              {days.map((d, i) => (
+                <th key={i} className="text-center py-2 px-2 text-slate-500 text-xs font-heading uppercase tracking-wider">
+                  <span className="block">{DAY_LABELS[i]}</span>
+                  <span className="block text-slate-600 font-normal normal-case tracking-normal">{d.getDate()}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {METRICS.map((metric, mi) => (
+              <tr key={metric.key} className={mi < METRICS.length - 1 ? 'border-b border-navy-800' : ''}>
+                <td className="py-3 pr-4 whitespace-nowrap">
+                  <span className="text-slate-300 text-xs">{metric.label}</span>
+                  {metric.unit && <span className="text-slate-600 text-xs ml-1">({metric.unit})</span>}
+                </td>
+                {days.map((d, di) => {
+                  const key = toDateKey(d)
+                  const val = logs?.[key]?.[metric.key]
+                  return (
+                    <td key={di} className="py-3 px-2 text-center">
+                      {isLoading
+                        ? <span className="text-navy-700">·</span>
+                        : val != null
+                          ? <span className="text-white font-medium">{val}</span>
+                          : <span className="text-navy-700">—</span>
+                      }
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -543,6 +1055,7 @@ const TABS = [
   { id: 'scheda', label: 'SCHEDA' },
   { id: 'dieta',  label: 'DIETA' },
   { id: 'photos', label: 'FOTO PROGRESSI' },
+  { id: 'dati',   label: 'DATI' },
 ]
 
 export function ClientDetail() {
@@ -550,6 +1063,22 @@ export function ClientDetail() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeTab = searchParams.get('tab') || 'scheda'
   const { data: client, isLoading } = useClient(id)
+  const { data: activeProgram } = useActiveProgram(id)
+  const { data: activeDietInfo } = useActiveDietInfo(id)
+  const { data: formUrl } = useQuestionnaireFormUrl()
+  const setQuestionnaire = useSetQuestionnaire()
+  const updateProgramExpiry = useUpdateProgramExpiry()
+  const updateDietExpiry = useUpdateDietExpiry()
+
+  const pending = client?.questionnaire_pending ?? false
+
+  async function handleSendQuestionnaire() {
+    await setQuestionnaire.mutateAsync({ clientId: id, pending: true })
+  }
+
+  async function handleRevokeQuestionnaire() {
+    await setQuestionnaire.mutateAsync({ clientId: id, pending: false })
+  }
 
   if (isLoading) return <div className="p-8 max-w-4xl mx-auto w-full"><p className="text-slate-500">Caricamento...</p></div>
 
@@ -559,24 +1088,76 @@ export function ClientDetail() {
         <ArrowLeft size={15} /> Tutti i clienti
       </Link>
 
-      <div className="mb-8 flex items-center gap-4">
-        <div className="w-14 h-14 bg-navy-800 border border-navy-700 flex items-center justify-center shrink-0">
-          <span className="font-heading font-bold text-gold-500 text-2xl">
-            {client?.full_name?.[0]?.toUpperCase() ?? '?'}
-          </span>
-        </div>
-        <div>
-          <h1 className="font-heading font-bold italic text-4xl text-white uppercase leading-tight">
-            {client?.full_name ?? '—'}
-          </h1>
-          <div className="flex items-center gap-4 mt-1">
-            {client?.email && <span className="text-slate-400 text-sm">{client.email}</span>}
-            {client?.phone && <>
-              <span className="text-navy-600">·</span>
-              <span className="text-slate-400 text-sm">{client.phone}</span>
-            </>}
+      <div className="mb-8 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 bg-navy-800 border border-navy-700 flex items-center justify-center shrink-0">
+            <span className="font-heading font-bold text-gold-500 text-2xl">
+              {client?.full_name?.[0]?.toUpperCase() ?? '?'}
+            </span>
+          </div>
+          <div>
+            <h1 className="font-heading font-bold italic text-4xl text-white uppercase leading-tight">
+              {client?.full_name ?? '—'}
+            </h1>
+            <div className="flex items-center gap-4 mt-1">
+              {client?.email && <span className="text-slate-400 text-sm">{client.email}</span>}
+              {client?.phone && <>
+                <span className="text-navy-600">·</span>
+                <span className="text-slate-400 text-sm">{client.phone}</span>
+              </>}
+            </div>
           </div>
         </div>
+
+        {/* Questionario */}
+        <div className="flex items-center gap-2 shrink-0">
+          {pending && (
+            <span className="flex items-center gap-1.5 text-amber-400 text-xs font-heading uppercase tracking-wider">
+              <Clock size={13} /> In attesa
+            </span>
+          )}
+          {pending
+            ? (
+              <button
+                onClick={handleRevokeQuestionnaire}
+                disabled={setQuestionnaire.isPending}
+                className="btn-ghost text-xs px-3 py-1.5 disabled:opacity-50"
+              >
+                <X size={13} /> Annulla invio
+              </button>
+            )
+            : (
+              <button
+                onClick={handleSendQuestionnaire}
+                disabled={setQuestionnaire.isPending || !formUrl}
+                title={!formUrl ? 'Configura il link del form in Impostazioni' : undefined}
+                className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50"
+              >
+                <Send size={13} /> Invia questionario
+              </button>
+            )
+          }
+        </div>
+      </div>
+
+      {/* Scadenze programma e dieta */}
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <ExpiryCard
+          icon={Dumbbell}
+          type="Programma"
+          item={activeProgram}
+          clientId={id}
+          isSaving={updateProgramExpiry.isPending}
+          onSave={dateValue => updateProgramExpiry.mutateAsync({ clientId: id, programId: activeProgram?.id, expiresAt: dateValue })}
+        />
+        <ExpiryCard
+          icon={Salad}
+          type="Dieta"
+          item={activeDietInfo}
+          clientId={id}
+          isSaving={updateDietExpiry.isPending}
+          onSave={dateValue => updateDietExpiry.mutateAsync({ clientId: id, dietId: activeDietInfo?.id, expiresAt: dateValue })}
+        />
       </div>
 
       <div className="flex gap-0 border-b border-navy-700 mb-8 justify-center">
@@ -595,6 +1176,7 @@ export function ClientDetail() {
       {activeTab === 'scheda' && <TabScheda clientId={id} />}
       {activeTab === 'dieta'  && <TabDieta  clientId={id} />}
       {activeTab === 'photos' && <TabFoto   clientId={id} />}
+      {activeTab === 'dati'   && <TabDati   clientId={id} />}
     </div>
   )
 }
