@@ -2,7 +2,7 @@ import { Navigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
 export function ProtectedRoute({ children }) {
-  const { session, loading } = useAuth()
+  const { session, profile, loading } = useAuth()
 
   if (loading) {
     return (
@@ -15,6 +15,11 @@ export function ProtectedRoute({ children }) {
   }
 
   if (!session) {
+    return <Navigate to="/login" replace />
+  }
+
+  // Secondo layer: se il profilo è caricato e non è un PT, logout e redirect
+  if (profile && profile.role !== 'pt') {
     return <Navigate to="/login" replace />
   }
 

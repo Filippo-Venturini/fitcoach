@@ -19,7 +19,7 @@ export function Login() {
       navigate('/')
     } catch (err) {
       console.error('[Login error]', err.message)
-      setError('Credenziali non valide. Riprova.')
+      setError(err.message?.includes('Personal Trainer') ? err.message : 'Credenziali non valide. Riprova.')
     } finally {
       setLoading(false)
     }

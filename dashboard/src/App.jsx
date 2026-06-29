@@ -11,6 +11,7 @@ import { Catalog } from './pages/Catalog'
 import { NewWorkoutProgram } from './pages/NewWorkoutProgram'
 import { UsefulFiles } from './pages/UsefulFiles'
 import { Settings } from './pages/Settings'
+import { SetPassword } from './pages/SetPassword'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,6 +46,7 @@ export default function App() {
               <Route path="files" element={<UsefulFiles />} />
               <Route path="settings" element={<Settings />} />
             </Route>
+            <Route path="/set-password" element={<SetPassword />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

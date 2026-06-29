@@ -34,8 +34,18 @@ export function AuthProvider({ children }) {
   }
 
   async function signIn(email, password) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
+    // Controlla che l'utente sia un PT — i clienti non possono accedere alla dashboard
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', data.user.id)
+      .single()
+    if (profile?.role !== 'pt') {
+      await supabase.auth.signOut()
+      throw new Error('Accesso non autorizzato. Questa area è riservata ai Personal Trainer.')
+    }
   }
 
   async function signOut() {

@@ -46,23 +46,19 @@ function ClientStatusCol({ label, expiresAt }) {
   )
 }
 
-// Crea utente via signUp (funziona con anon key, senza admin API)
-// Con email confirmation disabilitata in Supabase, l'account è subito attivo
+// Crea cliente tramite Edge Function — usa inviteUserByEmail con service role
+// Il cliente riceve una email con il link per impostare la propria password
 function useCreateClient() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ email, fullName, password }) => {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { full_name: fullName, role: 'client' },
-        },
+    mutationFn: async ({ email, fullName }) => {
+      const { data, error } = await supabase.functions.invoke('invite-client', {
+        body: { email, full_name: fullName },
       })
       if (error) throw error
+      if (data?.error) throw new Error(data.error)
     },
     onSuccess: () => {
-      // Piccolo delay per dare tempo al trigger di creare il profilo
       setTimeout(() => qc.invalidateQueries({ queryKey: ['clients'] }), 500)
     },
   })
@@ -78,27 +74,45 @@ function formatDate(dateStr) {
 function NewClientModal({ onClose }) {
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
-  const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
+  const [sent, setSent] = useState(false)
   const create = useCreateClient()
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError(null)
-    if (password.length < 6) { setError('La password deve essere di almeno 6 caratteri'); return }
     try {
-      await create.mutateAsync({ email, fullName, password })
-      onClose()
+      await create.mutateAsync({ email, fullName })
+      setSent(true)
     } catch (err) {
-      setError(err.message || 'Errore durante la creazione')
+      setError(err.message || "Errore durante l'invio dell'invito")
     }
+  }
+
+  if (sent) {
+    return (
+      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
+        <div className="card w-full max-w-md text-center">
+          <div className="text-4xl mb-4">✉️</div>
+          <h2 className="font-heading font-bold italic text-2xl uppercase text-white mb-2">
+            Invito inviato
+          </h2>
+          <p className="text-slate-400 text-sm mb-6">
+            <span className="text-white">{email}</span> riceverà una email con il link per impostare la propria password e accedere all'app.
+          </p>
+          <button onClick={onClose} className="btn-primary w-full justify-center">
+            CHIUDI
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
       <div className="card w-full max-w-md">
         <h2 className="font-heading font-bold italic text-2xl uppercase text-white mb-6">
-          Nuovo cliente
+          Invita cliente
         </h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -126,24 +140,11 @@ function NewClientModal({ onClose }) {
               required
             />
           </div>
-          <div>
-            <label className="block text-xs font-heading font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-              Password temporanea
-            </label>
-            <input
-              type="password"
-              className="input"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="min. 6 caratteri"
-              required
-            />
-          </div>
           {error && (
             <p className="text-red-400 text-sm bg-red-900/20 px-4 py-2.5">{error}</p>
           )}
           <p className="text-slate-500 text-xs">
-            Il cliente userà questa password per accedere all'app. Comunicagliela in privato.
+            Il cliente riceverà una email con il link per impostare la propria password.
           </p>
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-ghost flex-1 justify-center">
@@ -154,7 +155,7 @@ function NewClientModal({ onClose }) {
               disabled={create.isPending}
               className="btn-primary flex-1 justify-center disabled:opacity-50"
             >
-              {create.isPending ? 'CREAZIONE...' : 'CREA CLIENTE'}
+              {create.isPending ? 'INVIO...' : 'INVIA INVITO'}
             </button>
           </div>
         </form>
