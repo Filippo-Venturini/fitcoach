@@ -930,12 +930,13 @@ function TabFoto({ clientId }) {
 // ─── Tab: Dati ────────────────────────────────────────────────
 
 const METRICS = [
-  { key: 'peso',    label: 'Peso',                unit: 'kg' },
-  { key: 'vita',    label: 'Circonferenza vita',  unit: 'cm' },
-  { key: 'fianchi', label: 'Circonferenza fianchi', unit: 'cm' },
-  { key: 'sonno',   label: 'Ore di sonno',        unit: 'h'  },
-  { key: 'passi',   label: 'Passi',               unit: ''   },
-  { key: 'calorie', label: 'Calorie',             unit: 'kcal' },
+  { key: 'peso',           label: 'Peso',            unit: 'kg',   type: 'number'  },
+  { key: 'vita',           label: 'Vita',            unit: 'cm',   type: 'number'  },
+  { key: 'allenamento',    label: 'Allenamento',     unit: '',     type: 'boolean' },
+  { key: 'cheat',          label: 'Cheat',           unit: '',     type: 'boolean' },
+  { key: 'ore_sonno',      label: 'Ore sonno',       unit: 'h',    type: 'number'  },
+  { key: 'qualita_sonno',  label: 'Qualità sonno',   unit: '1-10', type: 'number'  },
+  { key: 'stress',         label: 'Stress',          unit: '1-10', type: 'number'  },
 ]
 
 const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
@@ -978,6 +979,20 @@ function useDailyLogs(clientId, weekStart) {
   })
 }
 
+function computeWeeklyAvg(logs, days, metric) {
+  if (metric.type === 'boolean') {
+    const count = days.filter(d => logs?.[toDateKey(d)]?.[metric.key] === true).length
+    return count > 0 ? `${count}/7` : null
+  }
+  const vals = days
+    .map(d => logs?.[toDateKey(d)]?.[metric.key])
+    .filter(v => v != null && v !== '' && !isNaN(Number(v)))
+    .map(Number)
+  if (vals.length === 0) return null
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length
+  return Number.isInteger(avg) ? avg : avg.toFixed(1)
+}
+
 function TabDati({ clientId }) {
   const [monday, setMonday] = useState(() => getMondayOf(new Date()))
   const days = getWeekDays(monday)
@@ -1017,31 +1032,50 @@ function TabDati({ clientId }) {
                   <span className="block text-slate-600 font-normal normal-case tracking-normal">{d.getDate()}</span>
                 </th>
               ))}
+              <th className="text-center py-2 px-3 text-gold-600 text-xs font-heading uppercase tracking-wider whitespace-nowrap">
+                Media
+              </th>
             </tr>
           </thead>
           <tbody>
-            {METRICS.map((metric, mi) => (
-              <tr key={metric.key} className={mi < METRICS.length - 1 ? 'border-b border-navy-800' : ''}>
-                <td className="py-3 pr-4 whitespace-nowrap">
-                  <span className="text-slate-300 text-xs">{metric.label}</span>
-                  {metric.unit && <span className="text-slate-600 text-xs ml-1">({metric.unit})</span>}
-                </td>
-                {days.map((d, di) => {
-                  const key = toDateKey(d)
-                  const val = logs?.[key]?.[metric.key]
-                  return (
-                    <td key={di} className="py-3 px-2 text-center">
-                      {isLoading
-                        ? <span className="text-navy-700">·</span>
-                        : val != null
-                          ? <span className="text-white font-medium">{val}</span>
-                          : <span className="text-navy-700">—</span>
-                      }
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
+            {METRICS.map((metric, mi) => {
+              const avg = isLoading ? null : computeWeeklyAvg(logs, days, metric)
+              return (
+                <tr key={metric.key} className={mi < METRICS.length - 1 ? 'border-b border-navy-800' : ''}>
+                  <td className="py-3 pr-4 whitespace-nowrap">
+                    <span className="text-slate-300 text-xs">{metric.label}</span>
+                    {metric.unit && <span className="text-slate-600 text-xs ml-1">({metric.unit})</span>}
+                  </td>
+                  {days.map((d, di) => {
+                    const key = toDateKey(d)
+                    const val = logs?.[key]?.[metric.key]
+                    let display
+                    if (isLoading) {
+                      display = <span className="text-navy-700">·</span>
+                    } else if (metric.type === 'boolean') {
+                      display = val === true
+                        ? <span className="text-gold-500 font-bold">✓</span>
+                        : <span className="text-navy-700">—</span>
+                    } else {
+                      display = val != null
+                        ? <span className="text-white font-medium">{val}</span>
+                        : <span className="text-navy-700">—</span>
+                    }
+                    return (
+                      <td key={di} className="py-3 px-2 text-center">{display}</td>
+                    )
+                  })}
+                  <td className="py-3 px-3 text-center">
+                    {isLoading
+                      ? <span className="text-navy-700">·</span>
+                      : avg != null
+                        ? <span className="text-gold-400 font-semibold text-xs">{avg}</span>
+                        : <span className="text-navy-700">—</span>
+                    }
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
