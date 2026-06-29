@@ -47,7 +47,7 @@ export default function App() {
               <Route path="settings" element={<Settings />} />
             </Route>
             <Route path="/set-password" element={<SetPassword />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
