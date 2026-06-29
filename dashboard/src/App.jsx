@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './hooks/useAuth'
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -22,11 +23,26 @@ const queryClient = new QueryClient({
   },
 })
 
+function AuthRedirectHandler() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    const hash = window.location.hash
+    if (!hash) return
+    const params = new URLSearchParams(hash.replace('#', ''))
+    const type = params.get('type')
+    if (type === 'invite' || type === 'recovery') {
+      navigate('/set-password' + hash, { replace: true })
+    }
+  }, [])
+  return null
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <BrowserRouter>
+          <AuthRedirectHandler />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
