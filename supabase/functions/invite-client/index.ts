@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
       })
     }
 
-    const { email, full_name } = await req.json()
+    const { email, full_name, redirect_to } = await req.json()
 
     if (!email || !full_name) {
       return new Response(JSON.stringify({ error: 'Email e nome sono obbligatori' }), {
@@ -64,6 +64,7 @@ Deno.serve(async (req) => {
 
     const { data, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
       data: { full_name, role: 'client' },
+      ...(redirect_to ? { redirectTo: redirect_to } : {}),
     })
 
     if (inviteError) {

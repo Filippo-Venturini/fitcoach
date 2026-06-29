@@ -53,7 +53,11 @@ function useCreateClient() {
   return useMutation({
     mutationFn: async ({ email, fullName }) => {
       const { data, error } = await supabase.functions.invoke('invite-client', {
-        body: { email, full_name: fullName },
+        body: {
+          email,
+          full_name: fullName,
+          redirect_to: `${window.location.origin}/set-password`,
+        },
       })
       if (error) throw error
       if (data?.error) throw new Error(data.error)
