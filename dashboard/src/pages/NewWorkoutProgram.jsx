@@ -77,6 +77,7 @@ function useSaveProgram() {
             reps: ex.reps || null,
             carico: ex.carico || null,
             rest_seconds: ex.rest_seconds ? parseInt(ex.rest_seconds) : null,
+            cadenza: ex.cadenza || null,
             notes: ex.notes || null,
             order_index: i,
           }))
@@ -151,6 +152,7 @@ function SortableExerciseRow({ ex, onUpdate, onRemove }) {
           <input className="input text-xs py-1" value={ex.rest_seconds} onChange={e => onUpdate('rest_seconds', e.target.value)} placeholder="90s" />
         </div>
       </div>
+      <input className="input text-xs py-1 mb-1.5" value={ex.cadenza} onChange={e => onUpdate('cadenza', e.target.value)} placeholder="Cadenza (opzionale)" />
       <input className="input text-xs py-1" value={ex.notes} onChange={e => onUpdate('notes', e.target.value)} placeholder="Note esercizio (opzionale)" />
     </div>
   )
@@ -159,7 +161,8 @@ function SortableExerciseRow({ ex, onUpdate, onRemove }) {
 // ─── Catalogo laterale ────────────────────────────────────────
 
 const MUSCLE_GROUPS = [
-  'Tutti', 'Petto', 'Bicipiti', 'Schiena', 'Tricipiti', 'Spalle', 'Gambe', 'Addominali', 'Tutto il corpo',
+  'Tutti', 'Petto', 'Centro Schiena', 'Dorsale', 'Spalle', 'Spalla Posteriore', 'Bicipiti',
+  'Tricipiti', 'Quadricipiti', 'Femorali', 'Glutei', 'Addome', 'Stabilizzatori',
 ]
 
 function CatalogPanel({ plans, activePlanIdx, onAddExercise }) {
@@ -215,32 +218,53 @@ function CatalogPanel({ plans, activePlanIdx, onAddExercise }) {
 
 // ─── Volume counter ───────────────────────────────────────────
 
-function muscleGroupCountsFromPlans(plans) {
+function countsFromExercises(exercises) {
   const counts = {}
-  for (const plan of plans) {
-    for (const ex of (plan.exercises ?? [])) {
-      const mg = ex.muscle_group
-      if (mg) counts[mg] = (counts[mg] || 0) + 1
-    }
+  for (const ex of (exercises ?? [])) {
+    const mg = ex.muscle_group
+    if (mg) counts[mg] = (counts[mg] || 0) + 1
   }
   return counts
 }
 
-function VolumeCounter({ plans }) {
-  const counts = muscleGroupCountsFromPlans(plans)
+function VolumeBadges({ counts }) {
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1])
   if (!entries.length) return null
+  const total = entries.reduce((s, [, c]) => s + c, 0)
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {entries.map(([mg, count]) => (
+        <span key={mg} className="flex items-center gap-1.5 bg-navy-900 border border-navy-700 px-2 py-1 text-xs">
+          <span className="text-slate-300">{mg}</span>
+          <span className="text-gold-500 font-bold">{count}</span>
+        </span>
+      ))}
+      <span className="flex items-center gap-1.5 bg-gold-500/10 border border-gold-500/40 px-2 py-1 text-xs">
+        <span className="text-gold-300 uppercase tracking-wider">Totale</span>
+        <span className="text-gold-400 font-bold">{total}</span>
+      </span>
+    </div>
+  )
+}
+
+function VolumeCounter({ plans }) {
+  const counts = countsFromExercises(plans.flatMap(p => p.exercises ?? []))
+  if (!Object.keys(counts).length) return null
   return (
     <div className="mt-4 p-3 bg-navy-800 border border-navy-700">
       <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-2">Volume programma</p>
-      <div className="flex flex-wrap gap-2">
-        {entries.map(([mg, count]) => (
-          <span key={mg} className="flex items-center gap-1.5 bg-navy-900 border border-navy-700 px-2 py-1 text-xs">
-            <span className="text-slate-300">{mg}</span>
-            <span className="text-gold-500 font-bold">{count}</span>
-          </span>
-        ))}
-      </div>
+      <VolumeBadges counts={counts} />
+    </div>
+  )
+}
+
+function PlanVolumeCounter({ plan }) {
+  const counts = countsFromExercises(plan.exercises)
+  if (!Object.keys(counts).length) return null
+  return (
+    <div className="mb-3 pb-3 border-b border-navy-700">
+      <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-2">Volume scheda</p>
+      <VolumeBadges counts={counts} />
     </div>
   )
 }
@@ -257,6 +281,7 @@ function makeEmptyExercise(catalogItem) {
     reps: '10',
     carico: '',
     rest_seconds: '90',
+    cadenza: '',
     notes: '',
   }
 }
@@ -338,7 +363,6 @@ export function NewWorkoutProgram() {
 
   async function handleSave() {
     if (!programName.trim()) { setError('Dai un nome al programma'); return }
-    if (!programExpiry) { setError('Imposta una data di scadenza'); return }
     if (plans.some(p => !p.name.trim())) { setError('Dai un nome a ogni scheda'); return }
     if (plans.every(p => p.exercises.length === 0)) { setError('Aggiungi almeno un esercizio'); return }
     setError(null)
@@ -370,15 +394,27 @@ export function NewWorkoutProgram() {
               />
             </div>
             <div>
-              <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-0.5">Scadenza</p>
-              <input
-                type="date"
-                className="bg-transparent text-white border-0 border-b border-navy-600 focus:border-gold-500 focus:outline-none px-0 text-sm transition-colors"
-                style={{ colorScheme: 'dark' }}
-                min={new Date().toISOString().split('T')[0]}
-                value={programExpiry}
-                onChange={e => setProgramExpiry(e.target.value)}
-              />
+              <p className="text-xs font-heading uppercase tracking-wider text-slate-500 mb-0.5">Scadenza <span className="text-navy-500 normal-case tracking-normal">(opzionale)</span></p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  className="bg-transparent text-white border-0 border-b border-navy-600 focus:border-gold-500 focus:outline-none px-0 text-sm transition-colors"
+                  style={{ colorScheme: 'dark' }}
+                  min={new Date().toISOString().split('T')[0]}
+                  value={programExpiry}
+                  onChange={e => setProgramExpiry(e.target.value)}
+                />
+                {programExpiry && (
+                  <button
+                    type="button"
+                    onClick={() => setProgramExpiry('')}
+                    className="text-slate-600 hover:text-red-400 transition-colors shrink-0"
+                    title="Rimuovi scadenza"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -412,24 +448,25 @@ export function NewWorkoutProgram() {
               return (
                 <div
                   key={plan.id}
-                  className={`border transition-colors cursor-pointer ${isActive ? 'border-gold-500/50 bg-navy-800' : 'border-navy-700 bg-navy-800 hover:border-navy-600'}`}
-                  onClick={() => {
-                    setActivePlanIdx(planIdx)
-                    if (!isExpanded) setExpandedPlans(prev => ({ ...prev, [planIdx]: true }))
-                  }}
+                  className={`border transition-colors ${isActive ? 'border-gold-500/50 bg-navy-800' : 'border-navy-700 bg-navy-800 hover:border-navy-600'}`}
                 >
-                  {/* Plan header */}
-                  <div className="flex items-center justify-between px-4 py-3">
+                  {/* Plan header — click ovunque per aprire/chiudere */}
+                  <div
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer"
+                    onClick={() => {
+                      setActivePlanIdx(planIdx)
+                      setExpandedPlans(prev => ({ ...prev, [planIdx]: !prev[planIdx] }))
+                    }}
+                  >
                     <div className="flex items-center gap-3">
                       <div className={`w-2 h-2 rounded-full shrink-0 transition-colors ${isActive ? 'bg-gold-500' : 'bg-navy-600'}`} />
                       <input
                         className="bg-transparent font-heading font-bold italic text-lg text-white uppercase border-0 focus:outline-none w-48"
                         value={plan.name}
-                        onChange={e => { e.stopPropagation(); updatePlanName(planIdx, e.target.value) }}
+                        onChange={e => updatePlanName(planIdx, e.target.value)}
                         onClick={e => e.stopPropagation()}
                         placeholder="Nome scheda"
                       />
-                      <span className="text-slate-500 text-xs">{plan.exercises.length} esercizi</span>
                     </div>
                     <div className="flex items-center gap-2">
                       {plans.length > 1 && (
@@ -443,6 +480,7 @@ export function NewWorkoutProgram() {
                       <button
                         onClick={e => {
                           e.stopPropagation()
+                          setActivePlanIdx(planIdx)
                           setExpandedPlans(prev => ({ ...prev, [planIdx]: !prev[planIdx] }))
                         }}
                         className="text-slate-500 hover:text-white transition-colors p-1"
@@ -455,6 +493,7 @@ export function NewWorkoutProgram() {
                   {/* Plan exercises con DnD */}
                   {isExpanded && (
                     <div className="px-4 pb-4" onClick={e => e.stopPropagation()}>
+                      <PlanVolumeCounter plan={plan} />
                       {plan.exercises.length === 0 && (
                         <p className="text-slate-500 text-sm py-3 text-center">
                           Aggiungi esercizi dal catalogo

@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabase'
 import { ConfirmModal } from '../components/ConfirmModal'
 
 const MUSCLE_GROUPS = [
-  'Petto', 'Bicipiti', 'Schiena', 'Tricipiti', 'Spalle', 'Gambe', 'Addominali', 'Tutto il corpo',
+  'Petto', 'Centro Schiena', 'Dorsale', 'Spalle', 'Spalla Posteriore', 'Bicipiti',
+  'Tricipiti', 'Quadricipiti', 'Femorali', 'Glutei', 'Addome', 'Stabilizzatori',
 ]
 
 function useCatalog() {

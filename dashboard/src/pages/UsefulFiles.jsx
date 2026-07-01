@@ -4,6 +4,10 @@ import { Upload, Download, Trash2, FileText, File } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { ConfirmModal } from '../components/ConfirmModal'
 
+// ─── Costanti ─────────────────────────────────────────────────
+
+const CATEGORIES = ['Allenamento', 'Nutrizione', 'Privacy', 'Ricettario']
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 function fmt(dateStr) {
@@ -41,7 +45,7 @@ function useUsefulFiles() {
 function useUploadFile() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ file, displayName }) => {
+    mutationFn: async ({ file, displayName, category }) => {
       const ext = file.name.split('.').pop()
       const path = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}.${ext}`
 
@@ -55,6 +59,7 @@ function useUploadFile() {
         file_path: path,
         file_size: file.size,
         mime_type: file.type,
+        category,
       })
       if (dbError) {
         await supabase.storage.from('useful-files').remove([path])
@@ -86,6 +91,7 @@ export function UsefulFiles() {
   const qc = useQueryClient()
 
   const [displayName, setDisplayName] = useState('')
+  const [category, setCategory] = useState(CATEGORIES[0])
   const [uploadError, setUploadError] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null) // { id, filePath, name }
 
@@ -96,7 +102,7 @@ export function UsefulFiles() {
     if (!displayName.trim()) return
     setUploadError(null)
     try {
-      await uploadFile.mutateAsync({ file, displayName })
+      await uploadFile.mutateAsync({ file, displayName, category })
       setDisplayName('')
     } catch (err) {
       setUploadError(err.message)
@@ -143,6 +149,13 @@ export function UsefulFiles() {
             value={displayName}
             onChange={e => setDisplayName(e.target.value)}
           />
+          <select
+            className="input w-40 shrink-0"
+            value={category}
+            onChange={e => setCategory(e.target.value)}
+          >
+            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
           <label className={`btn-primary shrink-0 ${!displayName.trim() || uploadFile.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <Upload size={14} />
             {uploadFile.isPending ? 'CARICAMENTO...' : 'CARICA FILE'}
@@ -171,34 +184,50 @@ export function UsefulFiles() {
       )}
 
       {files?.length > 0 && (
-        <div className="space-y-2">
-          {files.map(file => (
-            <div key={file.id} className="card flex items-center gap-4">
-              <FileIcon mime={file.mime_type} />
-              <div className="flex-1 min-w-0">
-                <p className="text-white font-medium text-sm truncate">{file.name}</p>
-                <p className="text-slate-500 text-xs mt-0.5">
-                  {fmt(file.created_at)}
-                  {file.file_size ? ` · ${fmtSize(file.file_size)}` : ''}
-                  {file.mime_type ? ` · ${file.mime_type.split('/').pop().toUpperCase()}` : ''}
-                </p>
+        <div className="space-y-8">
+          {CATEGORIES.map(cat => {
+            const catFiles = files.filter(f => (f.category || 'Allenamento') === cat)
+            return (
+              <div key={cat}>
+                <h2 className="font-heading font-bold italic text-xl uppercase text-gold-500 mb-3">
+                  {cat}
+                </h2>
+                {catFiles.length === 0 ? (
+                  <p className="text-slate-600 text-sm">Nessun file in questa sezione</p>
+                ) : (
+                  <div className="space-y-2">
+                    {catFiles.map(file => (
+                      <div key={file.id} className="card flex items-center gap-4">
+                        <FileIcon mime={file.mime_type} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white font-medium text-sm truncate">{file.name}</p>
+                          <p className="text-slate-500 text-xs mt-0.5">
+                            {fmt(file.created_at)}
+                            {file.file_size ? ` · ${fmtSize(file.file_size)}` : ''}
+                            {file.mime_type ? ` · ${file.mime_type.split('/').pop().toUpperCase()}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleDownload(file)}
+                            className="btn-ghost text-xs px-3 py-1.5"
+                          >
+                            <Download size={13} /> Scarica
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget({ id: file.id, filePath: file.file_path, name: file.name })}
+                            className="text-slate-600 hover:text-red-400 transition-colors p-2"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => handleDownload(file)}
-                  className="btn-ghost text-xs px-3 py-1.5"
-                >
-                  <Download size={13} /> Scarica
-                </button>
-                <button
-                  onClick={() => setDeleteTarget({ id: file.id, filePath: file.file_path, name: file.name })}
-                  className="text-slate-600 hover:text-red-400 transition-colors p-2"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, Upload, Plus, ExternalLink, ChevronDown, ChevronUp, Pencil, Check, X, ArrowUp, ArrowDown, Send, Clock, Dumbbell, Salad } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Upload, Plus, ExternalLink, ChevronDown, ChevronUp, Pencil, Check, X, ArrowUp, ArrowDown, Send, Clock, Dumbbell, Salad, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 // ─── Data hooks ───────────────────────────────────────────────
@@ -90,6 +90,7 @@ function useUpdateExercises() {
           reps: ex.reps || null,
           carico: ex.carico || null,
           rest_seconds: ex.rest_seconds ? parseInt(ex.rest_seconds) : null,
+          cadenza: ex.cadenza || null,
           notes: ex.notes || null,
           order_index: i,
         }).eq('id', ex.id)
@@ -126,6 +127,8 @@ function useActiveProgram(clientId) {
         .select('id, name, expires_at')
         .eq('client_id', clientId)
         .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle()
       return data
     },
@@ -141,6 +144,8 @@ function useActiveDietInfo(clientId) {
         .select('id, name, expires_at')
         .eq('client_id', clientId)
         .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle()
       return data
     },
@@ -209,15 +214,18 @@ function getWeekKey(dateStr) {
   return getMonday(dateStr).toISOString().split('T')[0]
 }
 
-function usePhotoWeeks(clientId) {
+function usePhotoWeeks(clientId, sinceDate) {
+  const sinceKey = sinceDate ? sinceDate.toISOString() : 'all'
   return useQuery({
-    queryKey: ['photo-weeks', clientId],
+    queryKey: ['photo-weeks', clientId, sinceKey],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('progress_photos')
         .select('id, created_at')
         .eq('client_id', clientId)
         .order('created_at', { ascending: false })
+      if (sinceDate) query = query.gte('created_at', sinceDate.toISOString())
+      const { data, error } = await query
       if (error) throw error
       const weekMap = new Map()
       for (const photo of data ?? []) {
@@ -283,6 +291,7 @@ function ExerciseViewRow({ ex, onVideoToggle, videoId }) {
               ex.reps && `${ex.reps} reps`,
               ex.carico && ex.carico,
               ex.rest_seconds && `${ex.rest_seconds}s riposo`,
+              ex.cadenza && `cadenza ${ex.cadenza}`,
             ].filter(Boolean).join(' · ')}
           </p>
           {ex.notes && (
@@ -336,6 +345,7 @@ function ExerciseEditRow({ ex, data, onChange, onMoveUp, onMoveDown, isFirst, is
           <input className="input text-xs py-1" value={data.rest_seconds ?? ''} onChange={e => onChange('rest_seconds', e.target.value)} placeholder="90" />
         </div>
       </div>
+      <input className="input text-xs py-1 mb-1.5" value={data.cadenza ?? ''} onChange={e => onChange('cadenza', e.target.value)} placeholder="Cadenza (opzionale)" />
       <input className="input text-xs py-1" value={data.notes ?? ''} onChange={e => onChange('notes', e.target.value)} placeholder="Note (opzionale)" />
     </div>
   )
@@ -343,29 +353,47 @@ function ExerciseEditRow({ ex, data, onChange, onMoveUp, onMoveDown, isFirst, is
 
 // ─── Volume counter ───────────────────────────────────────────
 
-function muscleGroupCountsFromProgram(plans) {
+function countsFromExercises(exercises) {
   const counts = {}
-  for (const plan of (plans ?? [])) {
-    for (const ex of (plan.workout_exercises ?? [])) {
-      const mg = ex.exercises_catalog?.muscle_group
-      if (mg) counts[mg] = (counts[mg] || 0) + 1
-    }
+  for (const ex of (exercises ?? [])) {
+    const mg = ex.exercises_catalog?.muscle_group
+    if (mg) counts[mg] = (counts[mg] || 0) + 1
   }
   return counts
 }
 
-function ProgramVolumeCounter({ plans }) {
-  const counts = muscleGroupCountsFromProgram(plans)
+function VolumeBadges({ counts }) {
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1])
   if (!entries.length) return null
+  const total = entries.reduce((s, [, c]) => s + c, 0)
   return (
-    <div className="flex flex-wrap gap-1.5 mt-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
       {entries.map(([mg, count]) => (
         <span key={mg} className="flex items-center gap-1 bg-navy-800 border border-navy-700 px-2 py-0.5 text-xs">
           <span className="text-slate-400">{mg}</span>
           <span className="text-gold-500 font-bold">{count}</span>
         </span>
       ))}
+      <span className="flex items-center gap-1 bg-gold-500/10 border border-gold-500/40 px-2 py-0.5 text-xs">
+        <span className="text-gold-300 uppercase tracking-wider">Totale</span>
+        <span className="text-gold-400 font-bold">{total}</span>
+      </span>
+    </div>
+  )
+}
+
+function ProgramVolumeCounter({ plans }) {
+  const counts = countsFromExercises((plans ?? []).flatMap(p => p.workout_exercises ?? []))
+  if (!Object.keys(counts).length) return null
+  return <div className="mt-1.5"><VolumeBadges counts={counts} /></div>
+}
+
+function PlanVolumeCounter({ plan }) {
+  const counts = countsFromExercises(plan.workout_exercises)
+  if (!Object.keys(counts).length) return null
+  return (
+    <div className="px-4 py-2 bg-navy-950 border-b border-navy-700">
+      <VolumeBadges counts={counts} />
     </div>
   )
 }
@@ -382,6 +410,12 @@ function ExpiryCard({ icon: Icon, type, item, onSave, isSaving }) {
 
   async function handleSave() {
     await onSave(dateValue)
+    setEditing(false)
+  }
+
+  async function handleRemove() {
+    setDateValue('')
+    await onSave('')
     setEditing(false)
   }
 
@@ -416,6 +450,11 @@ function ExpiryCard({ icon: Icon, type, item, onSave, isSaving }) {
                 <button onClick={() => { setDateValue(item?.expires_at ?? ''); setEditing(false) }} className="btn-ghost text-xs px-2 py-1">
                   <X size={12} />
                 </button>
+                {item?.expires_at && (
+                  <button onClick={handleRemove} disabled={isSaving} className="btn-ghost text-xs px-2 py-1 text-red-400 hover:text-red-300 disabled:opacity-50" title="Rimuovi scadenza">
+                    <Trash2 size={12} />
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -446,7 +485,7 @@ function PlanCard({ plan, programIsActive, clientId }) {
   function startEdit() {
     const initial = {}
     plan.workout_exercises?.forEach(ex => {
-      initial[ex.id] = { sets: ex.sets ?? '', reps: ex.reps ?? '', carico: ex.carico ?? '', rest_seconds: ex.rest_seconds ?? '', notes: ex.notes ?? '' }
+      initial[ex.id] = { sets: ex.sets ?? '', reps: ex.reps ?? '', carico: ex.carico ?? '', rest_seconds: ex.rest_seconds ?? '', cadenza: ex.cadenza ?? '', notes: ex.notes ?? '' }
     })
     setEditData(initial)
     setEditOrder(plan.workout_exercises?.map(ex => ex.id) ?? [])
@@ -518,7 +557,9 @@ function PlanCard({ plan, programIsActive, clientId }) {
 
       {/* Exercises */}
       {expanded && (
-        <div className="border-t border-navy-700 divide-y divide-navy-800">
+        <div className="border-t border-navy-700">
+          <PlanVolumeCounter plan={plan} />
+          <div className="divide-y divide-navy-800">
           {editing
             ? editOrder.map((id, idx) => {
                 const ex = plan.workout_exercises?.find(e => e.id === id)
@@ -548,6 +589,7 @@ function PlanCard({ plan, programIsActive, clientId }) {
           {!plan.workout_exercises?.length && (
             <p className="text-slate-500 text-sm px-4 py-3">Nessun esercizio</p>
           )}
+          </div>
         </div>
       )}
     </div>
@@ -703,7 +745,7 @@ function TabDieta({ clientId }) {
 
   async function handleUpload(e) {
     const file = e.target.files?.[0]
-    if (!file || !planName.trim() || !planExpiry) return
+    if (!file || !planName.trim()) return
     // reset input file per permettere upload dello stesso file
     e.target.value = ''
     setUploadError(null)
@@ -757,18 +799,31 @@ function TabDieta({ clientId }) {
             value={planName}
             onChange={e => setPlanName(e.target.value)}
           />
-          <input
-            type="date"
-            className="input w-44 shrink-0"
-            style={{ colorScheme: 'dark' }}
-            min={new Date().toISOString().split('T')[0]}
-            value={planExpiry}
-            onChange={e => setPlanExpiry(e.target.value)}
-          />
-          <label className={`btn-primary shrink-0 ${!planName.trim() || !planExpiry || uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <input
+              type="date"
+              className="input w-44"
+              style={{ colorScheme: 'dark' }}
+              min={new Date().toISOString().split('T')[0]}
+              value={planExpiry}
+              onChange={e => setPlanExpiry(e.target.value)}
+              title="Scadenza (opzionale)"
+            />
+            {planExpiry && (
+              <button
+                type="button"
+                onClick={() => setPlanExpiry('')}
+                className="text-slate-600 hover:text-red-400 transition-colors"
+                title="Rimuovi scadenza"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <label className={`btn-primary shrink-0 ${!planName.trim() || uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <Upload size={14} />
             {uploading ? 'CARICAMENTO...' : 'CARICA PDF'}
-            <input type="file" accept=".pdf" className="hidden" disabled={!planName.trim() || !planExpiry || uploading} onChange={handleUpload} />
+            <input type="file" accept=".pdf" className="hidden" disabled={!planName.trim() || uploading} onChange={handleUpload} />
           </label>
         </div>
         {uploadError && (
@@ -908,19 +963,54 @@ function WeekRow({ week, clientId }) {
   )
 }
 
-function TabFoto({ clientId }) {
-  const { data: weeks, isLoading, isError, error } = usePhotoWeeks(clientId)
+const PHOTO_PERIODS = [
+  { value: 'all', label: 'Tutto' },
+  { value: '1',   label: 'Ultimo mese' },
+  { value: '3',   label: 'Ultimi 3 mesi' },
+  { value: '6',   label: 'Ultimi 6 mesi' },
+  { value: '12',  label: 'Ultimo anno' },
+]
 
-  if (isLoading) return <p className="text-slate-500 text-sm">Caricamento...</p>
-  if (isError) return <div className="card text-center py-10"><p className="text-red-400 text-sm">Errore: {error?.message}</p></div>
-  if (!weeks?.length) {
-    return <div className="card text-center py-10"><p className="text-slate-500">Il cliente non ha ancora caricato foto</p></div>
-  }
+function periodToSince(value) {
+  if (value === 'all') return null
+  const d = new Date()
+  d.setMonth(d.getMonth() - Number(value))
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function TabFoto({ clientId }) {
+  const [period, setPeriod] = useState('all')
+  const sinceDate = periodToSince(period)
+  const { data: weeks, isLoading, isError, error } = usePhotoWeeks(clientId, sinceDate)
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h3 className="font-heading font-bold italic text-xl uppercase text-white mb-6">Foto progressi</h3>
-      {weeks.map(week => (
+      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+        <h3 className="font-heading font-bold italic text-xl uppercase text-white">Foto progressi</h3>
+        <div className="flex items-center gap-2">
+          <span className="text-slate-500 text-xs font-heading uppercase tracking-wider">Periodo</span>
+          <select
+            className="input text-sm py-1.5 w-40"
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+          >
+            {PHOTO_PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {isLoading && <p className="text-slate-500 text-sm">Caricamento...</p>}
+      {isError && <div className="card text-center py-10"><p className="text-red-400 text-sm">Errore: {error?.message}</p></div>}
+      {!isLoading && !isError && !weeks?.length && (
+        <div className="card text-center py-10">
+          <p className="text-slate-500">
+            {period === 'all' ? 'Il cliente non ha ancora caricato foto' : 'Nessuna foto nel periodo selezionato'}
+          </p>
+        </div>
+      )}
+
+      {weeks?.map(week => (
         <WeekRow key={week.key} week={week} clientId={clientId} />
       ))}
     </div>
@@ -977,6 +1067,82 @@ function useDailyLogs(clientId, weekStart) {
       return Object.fromEntries((data ?? []).map(r => [r.logged_date, r.data]))
     },
   })
+}
+
+function useWeeklyNote(clientId, weekStart) {
+  return useQuery({
+    queryKey: ['weekly-note', clientId, toDateKey(weekStart)],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('weekly_notes')
+        .select('notes')
+        .eq('client_id', clientId)
+        .eq('week_start', toDateKey(weekStart))
+        .maybeSingle()
+      if (error) throw error
+      return data?.notes ?? ''
+    },
+  })
+}
+
+function useSaveWeeklyNote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ clientId, weekStart, notes }) => {
+      const { error } = await supabase
+        .from('weekly_notes')
+        .upsert(
+          { client_id: clientId, week_start: weekStart, notes: notes || null },
+          { onConflict: 'client_id,week_start' }
+        )
+      if (error) throw error
+    },
+    onSuccess: (_, { clientId, weekStart }) => {
+      qc.invalidateQueries({ queryKey: ['weekly-note', clientId, weekStart] })
+    },
+  })
+}
+
+function WeeklyNoteSection({ clientId, monday }) {
+  const weekStartStr = toDateKey(monday)
+  const { data: note, isLoading } = useWeeklyNote(clientId, monday)
+  const saveNote = useSaveWeeklyNote()
+  const [value, setValue] = useState('')
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    setValue(note ?? '')
+    setDirty(false)
+  }, [note, weekStartStr])
+
+  async function handleSave() {
+    await saveNote.mutateAsync({ clientId, weekStart: weekStartStr, notes: value })
+    setDirty(false)
+  }
+
+  return (
+    <div className="card mt-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-heading uppercase tracking-wider text-slate-400">Note della settimana</p>
+        {dirty && (
+          <button
+            onClick={handleSave}
+            disabled={saveNote.isPending}
+            className="btn-primary text-xs px-3 py-1 disabled:opacity-50"
+          >
+            <Check size={12} /> {saveNote.isPending ? 'Salvo...' : 'Salva'}
+          </button>
+        )}
+      </div>
+      <textarea
+        className="input w-full text-sm resize-none"
+        rows={4}
+        placeholder={isLoading ? 'Caricamento...' : 'Annotazioni riferite a questa settimana...'}
+        value={value}
+        onChange={e => { setValue(e.target.value); setDirty(true) }}
+      />
+    </div>
+  )
 }
 
 function computeWeeklyAvg(logs, days, metric) {
@@ -1079,6 +1245,8 @@ function TabDati({ clientId }) {
           </tbody>
         </table>
       </div>
+
+      <WeeklyNoteSection clientId={clientId} monday={monday} />
     </div>
   )
 }

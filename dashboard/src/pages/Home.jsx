@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Camera, ChevronRight, Users, Dumbbell, Salad, AlertTriangle } from 'lucide-react'
+import { Camera, ChevronRight, Users, Dumbbell, Salad, AlertTriangle, CalendarClock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 
@@ -39,12 +39,32 @@ function useKPIs() {
   })
 }
 
+// Lunedì (00:00) della settimana che contiene `date`
+function mondayOf(date) {
+  const d = new Date(date)
+  const day = d.getDay()
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
 function useExpiringItems() {
   return useQuery({
     queryKey: ['expiring-items'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0]
-      const inSevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      // Confini settimana corrente e prossima
+      const thisMonday = mondayOf(new Date())
+      const thisSundayEnd = new Date(thisMonday)
+      thisSundayEnd.setDate(thisSundayEnd.getDate() + 6)
+      thisSundayEnd.setHours(23, 59, 59, 999)
+
+      const nextMonday = new Date(thisMonday)
+      nextMonday.setDate(nextMonday.getDate() + 7)
+      const nextSundayEnd = new Date(nextMonday)
+      nextSundayEnd.setDate(nextSundayEnd.getDate() + 6)
+      nextSundayEnd.setHours(23, 59, 59, 999)
+
+      const nextWeekEndStr = nextSundayEnd.toISOString().split('T')[0]
 
       const [{ data: programs }, { data: diets }] = await Promise.all([
         supabase
@@ -52,14 +72,14 @@ function useExpiringItems() {
           .select('client_id, name, expires_at, profiles(id, full_name)')
           .eq('is_active', true)
           .not('expires_at', 'is', null)
-          .lte('expires_at', inSevenDays)
+          .lte('expires_at', nextWeekEndStr)
           .order('expires_at'),
         supabase
           .from('diet_plans')
           .select('client_id, name, expires_at, profiles(id, full_name)')
           .eq('is_active', true)
           .not('expires_at', 'is', null)
-          .lte('expires_at', inSevenDays)
+          .lte('expires_at', nextWeekEndStr)
           .order('expires_at'),
       ])
 
@@ -76,11 +96,24 @@ function useExpiringItems() {
         map.get(id).items.push({ type: 'Dieta', label: d.name, expires_at: d.expires_at })
       }
 
-      return Array.from(map.values()).sort((a, b) => {
+      const clients = Array.from(map.values()).sort((a, b) => {
         const minA = Math.min(...a.items.map(i => new Date(i.expires_at)))
         const minB = Math.min(...b.items.map(i => new Date(i.expires_at)))
         return minA - minB
       })
+
+      // Bucket per cliente in base alla scadenza più imminente:
+      //  - urgent: scaduti o in scadenza entro domenica di questa settimana
+      //  - upcoming: in scadenza nella settimana successiva (lun–dom)
+      const urgent = []
+      const upcoming = []
+      for (const client of clients) {
+        const minDate = new Date(Math.min(...client.items.map(i => new Date(i.expires_at))))
+        if (minDate <= thisSundayEnd) urgent.push(client)
+        else if (minDate >= nextMonday && minDate <= nextSundayEnd) upcoming.push(client)
+      }
+
+      return { urgent, upcoming }
     },
   })
 }
@@ -125,6 +158,55 @@ function KpiCard({ value, label, icon: Icon, isLoading }) {
   )
 }
 
+// ─── Sezione scadenze ─────────────────────────────────────────
+
+function ExpiryClientRow({ client }) {
+  return (
+    <Link
+      to={`/clients/${client.id}`}
+      className="card mb-2 flex items-center justify-between hover:border-navy-600 transition-colors group"
+    >
+      <div className="flex items-center gap-4">
+        <div className="w-10 h-10 bg-navy-700 flex items-center justify-center shrink-0">
+          <span className="font-heading font-bold text-gold-500 text-lg">
+            {client.name?.[0]?.toUpperCase() ?? '?'}
+          </span>
+        </div>
+        <div>
+          <p className="font-heading font-bold text-white group-hover:text-gold-400 transition-colors">
+            {client.name}
+          </p>
+          <div className="flex gap-3 mt-0.5">
+            {client.items.map((item, i) => {
+              const days = daysUntil(item.expires_at)
+              const cls = days < 0 ? 'text-red-400' : days <= 3 ? 'text-amber-400' : 'text-slate-400'
+              return (
+                <span key={i} className={`text-xs ${cls}`}>
+                  {item.type}: {days < 0 ? 'scaduto' : days === 0 ? 'oggi' : `${days}g`}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+      <ChevronRight size={16} className="text-slate-600 group-hover:text-gold-500 transition-colors" />
+    </Link>
+  )
+}
+
+function ExpirySection({ icon: Icon, iconColor, title, clients }) {
+  if (!clients?.length) return null
+  return (
+    <div className="mb-8">
+      <div className="flex items-center gap-3 mb-5">
+        <Icon size={18} className={iconColor} />
+        <h2 className="font-heading font-bold italic text-xl uppercase text-white">{title}</h2>
+      </div>
+      {clients.map(client => <ExpiryClientRow key={client.id} client={client} />)}
+    </div>
+  )
+}
+
 // ─── Pagina ───────────────────────────────────────────────────
 
 export function Home() {
@@ -161,51 +243,21 @@ export function Home() {
         </div>
 
         {/* Scadenze */}
-        {(expiringLoading || expiring?.length > 0) && (
-          <div className="mb-8">
-            <div className="flex items-center gap-3 mb-5">
-              <AlertTriangle size={18} className="text-amber-400" />
-              <h2 className="font-heading font-bold italic text-xl uppercase text-white">
-                In scadenza — prossimi 7 giorni
-              </h2>
-            </div>
+        {expiringLoading && <p className="text-slate-500 text-sm mb-8">Caricamento scadenze...</p>}
 
-            {expiringLoading && <p className="text-slate-500 text-sm">Caricamento...</p>}
+        <ExpirySection
+          icon={AlertTriangle}
+          iconColor="text-red-400"
+          title="Urgenti — questa settimana"
+          clients={expiring?.urgent}
+        />
 
-            {expiring?.map(client => (
-              <Link
-                key={client.id}
-                to={`/clients/${client.id}`}
-                className="card mb-2 flex items-center justify-between hover:border-navy-600 transition-colors group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-navy-700 flex items-center justify-center shrink-0">
-                    <span className="font-heading font-bold text-gold-500 text-lg">
-                      {client.name?.[0]?.toUpperCase() ?? '?'}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-heading font-bold text-white group-hover:text-gold-400 transition-colors">
-                      {client.name}
-                    </p>
-                    <div className="flex gap-3 mt-0.5">
-                      {client.items.map((item, i) => {
-                        const days = daysUntil(item.expires_at)
-                        const cls = days < 0 ? 'text-red-400' : days <= 3 ? 'text-amber-400' : 'text-slate-400'
-                        return (
-                          <span key={i} className={`text-xs ${cls}`}>
-                            {item.type}: {days < 0 ? 'scaduto' : days === 0 ? 'oggi' : `${days}g`}
-                          </span>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-                <ChevronRight size={16} className="text-slate-600 group-hover:text-gold-500 transition-colors" />
-              </Link>
-            ))}
-          </div>
-        )}
+        <ExpirySection
+          icon={CalendarClock}
+          iconColor="text-amber-400"
+          title="In arrivo — settimana prossima"
+          clients={expiring?.upcoming}
+        />
 
         {/* Foto recenti */}
         <div className="flex items-center gap-3 mb-5">
